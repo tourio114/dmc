@@ -60,3 +60,35 @@ test('Java Huawei source discovers a real directory and matches macOS ARM64 pack
   assert.equal(response.status,200);const files=await response.json();assert.equal(files.length,1);assert.equal(files[0].url,'https://mirrors.huaweicloud.com/openjdk/21.0.2/openjdk-21.0.2_macos-aarch64_bin.tar.gz');
  }finally{globalThis.fetch=original;}
 });
+test('mod search retains authentic icons, galleries and purpose categories',async()=>{
+ const original=globalThis.fetch;
+ try{
+  globalThis.fetch=async()=>Response.json({hits:[{project_id:'abc',slug:'test',title:'Test',description:'Optimizes the renderer',downloads:5,icon_url:'https://cdn.modrinth.com/data/abc/icon.png',featured_gallery:'https://cdn.modrinth.com/data/abc/featured.webp',gallery:['https://cdn.modrinth.com/data/abc/second.webp','https://evil.example/invalid.png'],categories:['optimization']}],total_hits:1});
+  const r=await worker.fetch(new Request('https://dmc.test/api/mods?source=modrinth&action=search'));
+  const p=(await r.json()).projects[0];assert.match(p.icon,/icon.png$/);assert.equal(p.gallery.length,2);assert.match(p.gallery[0].url,/featured.webp$/);assert.equal(p.categories[0],'optimization');
+ }finally{globalThis.fetch=original;}
+});
+test('project overview returns full images and captions without blocking version routes',async()=>{
+ const original=globalThis.fetch;
+ try{
+  globalThis.fetch=async url=>{assert.equal(String(url),'https://api.modrinth.com/v2/project/abc');return Response.json({id:'abc',slug:'test',title:'Test',description:'Renderer improvement',body:'# About\nImproves frame rate.',downloads:5,icon_url:'https://cdn.modrinth.com/data/abc/icon.png',gallery:[{url:'https://cdn.modrinth.com/data/abc/thumb.webp',raw_url:'https://cdn.modrinth.com/data/abc/full.png',title:'Before and after',description:'Lighting comparison',featured:true}],categories:['optimization']});};
+  const r=await worker.fetch(new Request('https://dmc.test/api/mods?source=modrinth&action=project&id=abc'));assert.equal(r.status,200);const p=(await r.json()).project;assert.match(p.gallery[0].url,/full.png$/);assert.match(p.gallery[0].thumbnail,/thumb.webp$/);assert.equal(p.gallery[0].description,'Lighting comparison');assert.match(p.about,/Improves frame rate/);
+ }finally{globalThis.fetch=original;}
+});
+test('CurseForge project metadata includes logo and screenshot thumbnails',async()=>{
+ const original=globalThis.fetch;
+ try{
+  globalThis.fetch=async()=>Response.json({data:{id:42,name:'Example',slug:'example',summary:'Adds machines',downloadCount:1,links:{},logo:{thumbnailUrl:'https://media.forgecdn.net/avatars/icon.png'},screenshots:[{url:'https://media.forgecdn.net/attachments/full.png',thumbnailUrl:'https://media.forgecdn.net/attachments/thumb.png',title:'Factory'}],categories:[{name:'Technology'}]}});
+  const r=await worker.fetch(new Request('https://dmc.test/api/mods?source=curseforge&action=project&id=42'),{CURSEFORGE_API_KEY:'test-secret'});const p=(await r.json()).project;assert.match(p.icon,/icon.png$/);assert.equal(p.gallery[0].title,'Factory');assert.match(p.gallery[0].thumbnail,/thumb.png$/);
+ }finally{globalThis.fetch=original;}
+});
+test('MC encyclopedia 403 stays explicit instead of a generic gateway error',async()=>{
+ const original=globalThis.fetch;
+ try{
+  globalThis.fetch=async()=>new Response('Forbidden',{status:403});
+  for(const action of ['search','project','links']){
+   const r=await worker.fetch(new Request('https://dmc.test/api/mods?'+new URLSearchParams({source:'mcmod',action,id:'2785',q:'钠'})));
+   assert.equal(r.status,403);const body=await r.json();assert.equal(body.upstreamStatus,403);assert.match(body.error,/浏览器/);assert.match(body.error,/Modrinth/);
+  }
+ }finally{globalThis.fetch=original;}
+});

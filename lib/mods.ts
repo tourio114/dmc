@@ -1,6 +1,7 @@
 import { SourceError, sourceJSON, sourceText, textOnly } from './upstream';
 export type ModSource = 'modrinth' | 'curseforge' | 'mcmod';
-export type ModProject = { id: string; source: ModSource; title: string; description: string; url: string; downloads?: number };
+export type ModImage = { url: string; thumbnail?: string; title?: string; description?: string };
+export type ModProject = { id: string; source: ModSource; title: string; description: string; url: string; downloads?: number; icon?: string; gallery?: ModImage[]; categories?: string[]; about?: string };
 export type ModFile = { id: string; project: string; source: 'modrinth' | 'curseforge'; name: string; filename: string; url: string | null; size: number; hash?: string; hashType?: 'SHA-1' | 'SHA-512'; date: string; gameVersions: string[]; loaders: string[]; dependencies: string[]; page: string };
 export type ModEnv = { CURSEFORGE_API_KEY?: string };
 const MR = 'https://api.modrinth.com/v2';
@@ -8,8 +9,8 @@ const CF = 'https://api.curseforge.com/v1';
 const loaders: Record<string, number> = { forge: 1, fabric: 4, quilt: 5, neoforge: 6 };
 export function modOptions(p: URLSearchParams) {
   const source = p.get('source') || 'modrinth', action = p.get('action') || 'search', query = (p.get('q') || '').trim(), game = p.get('game') || '', loader = p.get('loader') || '', id = p.get('id') || '', file = p.get('file') || '', offset = Number(p.get('offset') || '0');
-  if (!['modrinth','curseforge','mcmod'].includes(source) || !['search','versions','links','download'].includes(action) || query.length > 100 || !/^[\w.+-]{0,60}$/.test(game) || (loader && !(loader in loaders)) || !/^[\w-]{0,100}$/.test(id) || !/^[\w-]{0,100}$/.test(file) || !Number.isSafeInteger(offset) || offset < 0 || offset > 9800) throw new SourceError('模组查询参数无效', 400);
-  if (['versions','links','download'].includes(action) && !id) throw new SourceError('缺少模组 ID',400);
+  if (!['modrinth','curseforge','mcmod'].includes(source) || !['search','versions','links','download','project'].includes(action) || query.length > 100 || !/^[\w.+-]{0,60}$/.test(game) || (loader && !(loader in loaders)) || !/^[\w-]{0,100}$/.test(id) || !/^[\w-]{0,100}$/.test(file) || !Number.isSafeInteger(offset) || offset < 0 || offset > 9800) throw new SourceError('模组查询参数无效', 400);
+  if (['versions','links','download','project'].includes(action) && !id) throw new SourceError('缺少模组 ID',400);
   return { source: source as ModSource, action, query, game, loader, id, file, offset };
 }
 function cfHeaders(env: ModEnv) { if (!env.CURSEFORGE_API_KEY) throw new SourceError('CurseForge 尚未配置 API 密钥。站长在 Worker 设置中添加 CURSEFORGE_API_KEY 后即可启用搜索与批量下载；也可先使用 Modrinth。', 503); return { 'x-api-key': env.CURSEFORGE_API_KEY }; }
@@ -35,8 +36,46 @@ export function mcmodLinks(html: string): ModProject[] {
   return found;
 }
 type MRVersion = { id:string; project_id:string; name:string; date_published:string; game_versions:string[]; loaders:string[]; files:{filename:string;url:string;size:number;primary:boolean;hashes:{sha1?:string;sha512?:string}}[];dependencies:{dependency_type:string;project_id?:string;version_id?:string}[] };
-type CFProject = { id:number;name:string;summary:string;slug:string;downloadCount:number;links:{websiteUrl:string} };
+type CFProject = { id:number;name:string;summary:string;slug:string;downloadCount:number;links:{websiteUrl:string};logo?:{thumbnailUrl?:string;url?:string};screenshots?:{url:string;thumbnailUrl?:string;title?:string;description?:string}[];categories?:{name:string}[] };
 type CFFile = { id:number;modId:number;displayName:string;fileName:string;downloadUrl:string|null;fileLength:number;fileDate:string;gameVersions:string[];hashes:{algo:number;value:string}[];dependencies:{modId:number;relationType:number}[];isAvailable:boolean };
+// Only provider-hosted HTTPS images are exposed; no general image proxy.
+export function modImageURL(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  try {
+    const u = new URL(value.startsWith('//') ? 'https:' + value : value);
+    if(u.protocol !== 'https:' || u.username || u.password || u.port || !['cdn.modrinth.com','media.forgecdn.net','mediafilez.forgecdn.net','edge.forgecdn.net','i.mcmod.cn','www.mcmod.cn'].includes(u.hostname)) return undefined;
+    return u.href;
+  } catch { return undefined; }
+}
+function galleryImages(images: {url?:string;thumbnail?:string;title?:string|null;description?:string|null}[] = []): ModImage[] {
+  const seen = new Set<string>();
+  return images.flatMap(image => { const url=modImageURL(image.url); if(!url || seen.has(url))return [];seen.add(url);return [{url,thumbnail:modImageURL(image.thumbnail),title:image.title?.slice(0,150),description:image.description?.slice(0,500)}]; }).slice(0,12);
+}
+function cfProject(m:CFProject):ModProject { return {id:String(m.id),source:'curseforge',title:m.name,description:m.summary,url:`https://www.curseforge.com/minecraft/mc-mods/${encodeURIComponent(m.slug)}`,downloads:m.downloadCount,icon:modImageURL(m.logo?.thumbnailUrl||m.logo?.url),gallery:galleryImages(m.screenshots?.map(i=>({...i,thumbnail:i.thumbnailUrl}))),categories:m.categories?.map(c=>c.name).slice(0,8)}; }
+export function readableAbout(html: string): string {
+  return textOnly(html.replace(/<script\b[^>]*>[\s\S]*?<\/script>|<style\b[^>]*>[\s\S]*?<\/style>/gi,'').replace(/<\/(?:p|div|h[1-6])>|<br\b[^>]*>/gi,'\n')).replace(/\n{3,}/g,'\n\n').slice(0,6000);
+}
+function markdownAbout(body = '') { return readableAbout(body.replace(/```[\s\S]*?```/g,'').replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/\[([^\]]+)\]\([^)]*\)/g,'$1').replace(/^#{1,6}\s+/gm,'').replace(/\*\*|__/g,'')); }
+export function mcmodProject(html: string, id: string): ModProject {
+  const title=html.match(/<div class="class-title">[\s\S]*?<h3>([\s\S]*?)<\/h3>/)?.[1] || 'MC 百科模组';
+  const introStart=/<li\b[^>]*class="[^"]*\btext-area\b[^"]*\bcommon-text\b[^"]*"[^>]*>/g.exec(html);
+  let intro='';
+  if(introStart) {
+    const body=html.slice(introStart.index+introStart[0].length);let depth=1;
+    for(const tag of body.matchAll(/<\/?li\b[^>]*>/gi)) { depth+=tag[0].startsWith('</')?-1:1; if(depth===0){intro=body.slice(0,tag.index);break;} }
+  }
+  const cover=modImageURL(html.match(/<div class="class-cover-image">[\s\S]*?<img\b[^>]*\bsrc="([^"]+)"/)?.[1]);
+  const images=[...intro.matchAll(/<img\b[^>]*\bsrc="([^"]+)"[^>]*>/g)].map(m=>({url:m[1],title:'模组介绍图片'}));
+  const gallery=galleryImages([...(cover?[{url:cover,title:'模组封面'}]:[]),...images]);
+  const about=readableAbout(intro);
+  return {id,source:'mcmod',title:textOnly(title),description:about.split('\n').filter(Boolean).slice(0,3).join(' ').slice(0,350),about,url:`https://www.mcmod.cn/class/${id}.html`,icon:cover,gallery};
+}
+async function mcmodText(url: string) {
+  try { return await sourceText(url); } catch(e) {
+    if(e instanceof SourceError && e.upstreamStatus===403)throw new SourceError('MC 百科拒绝了当前服务器访问（403）。可以在浏览器中直接打开百科，或改用 Modrinth / CurseForge 查看图片与下载。',403,403);
+    throw e;
+  }
+}
 export function trustedModURL(value: string, source: 'modrinth'|'curseforge'): string {
   const u = new URL(value);
   const allowed = source === 'modrinth' ? ['cdn.modrinth.com'] : ['edge.forgecdn.net','mediafilez.forgecdn.net'];
@@ -49,18 +88,28 @@ async function cfID(id: string, env: ModEnv) { if(/^\d+$/.test(id))return id;con
 export async function modsCatalogue(p: URLSearchParams, env: ModEnv) {
   const o = modOptions(p);
   if(o.source==='mcmod') {
-    if(o.action==='search') { if(!o.query) return { projects:[],hasMore:false }; const html=await sourceText(`https://search.mcmod.cn/s?${new URLSearchParams({key:o.query,filter:'1',page:String(Math.floor(o.offset/20)+1)})}`);return {projects:mcmodSearch(html),hasMore:/下一页/.test(html)}; }
-    if(o.action==='links' && /^\d+$/.test(o.id))return { projects:mcmodLinks(await sourceText(`https://www.mcmod.cn/class/${o.id}.html`)),hasMore:false };
+    if(o.action==='search') { if(!o.query) return { projects:[],hasMore:false }; const html=await mcmodText(`https://search.mcmod.cn/s?${new URLSearchParams({key:o.query,filter:'1',page:String(Math.floor(o.offset/20)+1)})}`);return {projects:mcmodSearch(html),hasMore:/下一页/.test(html)}; }
+    if(o.action==='links' && /^\d+$/.test(o.id))return { projects:mcmodLinks(await mcmodText(`https://www.mcmod.cn/class/${o.id}.html`)),hasMore:false };
+    if(o.action==='project' && /^\d+$/.test(o.id)){const html=await mcmodText(`https://www.mcmod.cn/class/${o.id}.html`);return {project:mcmodProject(html,o.id),projects:mcmodLinks(html)};}
     throw new SourceError('MC 百科提供中文检索及公开来源导航，请选择条目中的下载平台。',400);
+  }
+  if(o.action==='project') {
+    if(o.source==='modrinth') {
+      const m=await sourceJSON<{id:string;slug:string;title:string;description:string;body?:string;downloads:number;icon_url?:string;gallery?:{url:string;raw_url?:string;title?:string;description?:string;featured?:boolean;ordering?:number}[];categories?:string[]}>(`${MR}/project/${encodeURIComponent(o.id)}`);
+      return {project:{id:m.id,source:'modrinth',title:m.title,description:m.description,about:markdownAbout(m.body),url:`https://modrinth.com/mod/${m.slug}`,downloads:m.downloads,icon:modImageURL(m.icon_url),gallery:galleryImages([...(m.gallery||[])].map(i=>({...i,url:i.raw_url||i.url,thumbnail:i.url})).sort((a,b)=>Number(!!b.featured)-Number(!!a.featured)||(a.ordering||0)-(b.ordering||0))),categories:m.categories?.slice(0,8)}};
+    }
+    const id=await cfID(o.id,env);
+    const data=await sourceJSON<{data:CFProject}>(`${CF}/mods/${id}`,cfHeaders(env));
+    return {project:cfProject(data.data)};
   }
   if(o.action==='search') {
     if(o.source==='modrinth') {
       const facets=[['project_type:mod']];if(o.game)facets.push([`versions:${o.game}`]);if(o.loader)facets.push([`categories:${o.loader}`]);
-      const data=await sourceJSON<{hits:{project_id:string;slug:string;title:string;description:string;downloads:number}[];total_hits:number}>(`${MR}/search?${new URLSearchParams({query:o.query,facets:JSON.stringify(facets),limit:'20',offset:String(o.offset),index:'downloads'})}`);
-      return {projects:data.hits.map(m=>({id:m.project_id,source:'modrinth',title:m.title,description:m.description,url:`https://modrinth.com/mod/${m.slug}`,downloads:m.downloads})),hasMore:o.offset+20<data.total_hits};
+      const data=await sourceJSON<{hits:{project_id:string;slug:string;title:string;description:string;downloads:number;icon_url?:string;featured_gallery?:string;gallery?:string[];categories?:string[]}[];total_hits:number}>(`${MR}/search?${new URLSearchParams({query:o.query,facets:JSON.stringify(facets),limit:'20',offset:String(o.offset),index:'downloads'})}`);
+      return {projects:data.hits.map(m=>({id:m.project_id,source:'modrinth',title:m.title,description:m.description,url:`https://modrinth.com/mod/${m.slug}`,downloads:m.downloads,icon:modImageURL(m.icon_url),gallery:galleryImages([...(m.featured_gallery?[{url:m.featured_gallery}]:[]),...(m.gallery||[]).map(url=>({url}))]).slice(0,3),categories:m.categories?.slice(0,8)})),hasMore:o.offset+20<data.total_hits};
     }
     const p=cfParams(o.game,o.loader);p.set('gameId','432');p.set('classId','6');p.set('searchFilter',o.query);p.set('index',String(o.offset));p.set('sortField','6');p.set('sortOrder','desc');
-    const data=await sourceJSON<{data:CFProject[];pagination:{totalCount:number}}>(`${CF}/mods/search?${p}`,cfHeaders(env));return {projects:data.data.map(m=>({id:String(m.id),source:'curseforge',title:m.name,description:m.summary,url:`https://www.curseforge.com/minecraft/mc-mods/${encodeURIComponent(m.slug)}`,downloads:m.downloadCount})),hasMore:o.offset+20<data.pagination.totalCount};
+    const data=await sourceJSON<{data:CFProject[];pagination:{totalCount:number}}>(`${CF}/mods/search?${p}`,cfHeaders(env));return {projects:data.data.map(cfProject),hasMore:o.offset+20<data.pagination.totalCount};
   }
   if(o.action==='versions') {
     if(!o.game || !o.loader)throw new SourceError('请选择游戏版本和加载器，再查看匹配文件。',400);

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 const result=await build({entryPoints:['lib/mods.ts'],bundle:true,write:false,format:'esm',platform:'browser'});
-const {modOptions,mcmodSearch,mcmodLinks,trustedModURL}=await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].text).toString('base64'));
+const {modOptions,mcmodSearch,mcmodLinks,trustedModURL,modImageURL,mcmodProject}=await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].text).toString('base64'));
 test('mod requests reject unsupported sources, IDs, pagination, loaders and oversized search',()=>{
  for(const p of [{source:'evil'},{action:'download',id:'../../foo',file:'a'},{source:'modrinth',loader:'unsupported'},{offset:'NaN'},{offset:'-1'},{q:'x'.repeat(101)},{action:'download'}])assert.throws(()=>modOptions(new URLSearchParams(p)));
 });
@@ -16,4 +16,15 @@ test('MC encyclopedia parsing exposes text and only public Modrinth / CurseForge
 test('file download host validation rejects arbitrary URLs and credentials',()=>{
  assert.equal(trustedModURL('https://cdn.modrinth.com/data/a/versions/b/a.jar','modrinth'),'https://cdn.modrinth.com/data/a/versions/b/a.jar');
  for(const u of ['https://localhost/a.jar','https://cdn.modrinth.com.evil.example/a.jar','https://user@cdn.modrinth.com/a.jar','http://cdn.modrinth.com/a.jar','https://cdn.modrinth.com:8443/a.jar'])assert.throws(()=>trustedModURL(u,'modrinth'));
+});
+
+test('provider images allow only approved HTTPS hosts',()=>{
+ assert.equal(modImageURL('//i.mcmod.cn/class/cover/a.jpg'),'https://i.mcmod.cn/class/cover/a.jpg');
+ assert.equal(modImageURL('https://cdn.modrinth.com/data/a/icon.webp'),'https://cdn.modrinth.com/data/a/icon.webp');
+ for(const value of ['http://cdn.modrinth.com/a.jpg','https://cdn.modrinth.com.evil.example/a.png','https://localhost/image','data:image/svg+xml,test','https://user@i.mcmod.cn/a.jpg','https://i.mcmod.cn:8443/a.jpg'])assert.equal(modImageURL(value),undefined);
+});
+test('MC encyclopedia overview extracts its real cover and readable purpose',()=>{
+ const html='<div class="class-cover-image"><img src="//i.mcmod.cn/class/cover/sodium.jpg"/></div><div class="class-title"><h3>钠</h3></div><li class="text-area">无关的依赖列表</li><li class="text-area common-text font14"><p>渲染优化模组。</p><p>提高帧率。</p><ul><li>嵌套条目</li></ul><script>doNotRender()</script><img src="https://i.mcmod.cn/editor/example.jpg"/></li>';
+ const p=mcmodProject(html,'2785');
+ assert.equal(p.icon,'https://i.mcmod.cn/class/cover/sodium.jpg');assert.equal(p.title,'钠');assert.equal(p.gallery.length,2);assert.match(p.about,/提高帧率/);assert(!p.about.includes('doNotRender'));assert(!p.about.includes('无关的依赖列表'));assert.match(p.about,/嵌套条目/);
 });
