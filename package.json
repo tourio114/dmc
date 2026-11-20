@@ -1,0 +1,30 @@
+{
+  "name": "dmc-download",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "wrangler dev --compatibility-date 2026-05-22",
+    "build": "node scripts/build-worker.mjs",
+    "build:worker": "node scripts/build-worker.mjs",
+    "deploy": "npm run build && wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "lucide-react": "1.31.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1",
+    "typescript": "5.9.3",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "wrangler": "4.92.0"
+  }
+}
