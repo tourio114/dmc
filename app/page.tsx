@@ -3,10 +3,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Download, Box, Coffee, Layers, Search, ExternalLink, X, Copy, Check, RefreshCw, ArrowDownToLine, Code2 as Github, Pickaxe, ShieldCheck, Zap, ChevronRight, Sun, Moon } from 'lucide-react';
 import { BMCL, mirrorURL } from '../lib/downloads';
 import ModsPanel from './mods-panel';
+import JarDownload from './jar-download';
 
 type Version = { id: string; type: string; url: string; releaseTime: string };
 type Manifest = { latest: { release: string; snapshot: string }; versions: Version[] };
-type FileItem = { name: string; url: string; detail?: string; hash?: string; hashType?: string; size?: number };
+type FileItem = { name: string; url: string; detail?: string; hash?: string; hashType?: string; size?: number; filename?: string };
 type Tab = 'minecraft' | 'forge' | 'fabric' | 'java' | 'mods';
 const names: Record<Tab, string> = { minecraft: 'Minecraft', forge: 'Forge', fabric: 'Fabric', java: 'Java', mods: '模组' };
 type ForgeBuild = { build: number; version: string; branch?: string; mcversion: string; modified: string; files: { category: string; format: string; hash?: string }[] };
@@ -34,7 +35,7 @@ const size = (n?: number) => n ? `${(n / 1024 / 1024).toFixed(1)} MB` : '';
 function FileLink({ item }: { item: FileItem }) {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
-  return <div className="file-row"><div className="file-info"><strong>{item.name}</strong><span>{item.detail} {size(item.size)}</span>{item.hash && <code title={item.hash}>{item.hashType || 'SHA-1'}: {item.hash}</code>}</div><div className="file-actions"><button className="icon-button" title={copyError ? '复制失败，请手动复制下载链接' : copied ? '已复制链接' : '复制下载链接'} aria-label="复制下载链接" onClick={async () => { try { await navigator.clipboard.writeText(item.url); setCopied(true); setCopyError(false); setTimeout(() => setCopied(false), 1800); } catch { setCopyError(true); } }}>{copied ? <Check size={17}/> : <Copy size={17}/>}</button><a className="download-button" href={item.url} target="_blank" rel="noreferrer"><Download size={16}/>下载</a></div>{copyError && <small role="status">复制失败，可右键下载按钮复制链接</small>}</div>;
+  return <div className="file-row"><div className="file-info"><strong>{item.name}</strong><span>{item.detail} {size(item.size)}</span>{item.hash && <code title={item.hash}>{item.hashType || 'SHA-1'}: {item.hash}</code>}</div><div className="file-actions"><button className="icon-button" title={copyError ? '复制失败，请手动复制下载链接' : copied ? '已复制链接' : '复制下载链接'} aria-label="复制下载链接" onClick={async () => { try { await navigator.clipboard.writeText(new URL(item.url,window.location.href).href); setCopied(true); setCopyError(false); setTimeout(() => setCopied(false), 1800); } catch { setCopyError(true); } }}>{copied ? <Check size={17}/> : <Copy size={17}/>}</button><>{item.filename?<JarDownload url={item.url} filename={item.filename} hash={item.hash} hashType={item.hashType} label={'下载 '+item.name}><Download size={16}/>下载</JarDownload>:<a className="download-button" href={item.url} target="_blank" rel="noreferrer"><Download size={16}/>下载</a>}</></div>{copyError && <small role="status">复制失败，可右键下载按钮复制链接</small>}</div>;
 }
 function Notice({ message, retry }: { message: string; retry?: () => void }) {
   return <div className="notice" role="status"><p>{message}</p>{retry && <button className="text-button" onClick={retry}><RefreshCw size={15}/>重新加载</button>}</div>;
@@ -72,7 +73,7 @@ function ResourcePanel({ tab }: { tab: Exclude<Tab, 'minecraft' | 'mods'> }) {
         list = data.sort((a: { build: number }, b: { build: number }) => b.build - a.build).flatMap((build: { version: string; branch?: string; mcversion: string; modified: string; files: { category: string; format: string; hash?: string }[] }) => build.files.filter(f => f.category === 'installer' && f.format === 'jar').map(f => {
           const params = new URLSearchParams({ mcversion: build.mcversion, version: build.version, category: f.category, format: f.format });
           if (build.branch) params.set('branch', build.branch);
-          return { name: `Forge ${build.version}`, detail: `MC ${build.mcversion} · JAR 安装器 · ${date(build.modified)}`, url: BMCL + '/forge/download?' + params, hash: f.hash, hashType: f.hash?.length === 32 ? 'MD5' : 'SHA-1' };
+          return { name: `Forge ${build.version}`, detail: `MC ${build.mcversion} · JAR 安装器 · ${date(build.modified)}`, url: '/api/forge-download?' + params, filename: `forge-${build.mcversion}-${build.version}${build.branch?'-'+build.branch:''}-installer.jar`, hash: f.hash, hashType: f.hash?.length === 32 ? 'MD5' : 'SHA-1' };
         }));
       } else if (tab === 'fabric') {
         const [loaders, installers] = await Promise.all([api('fabric', { version }, controller.signal), api('fabric-installer', {}, controller.signal)]);

@@ -47,7 +47,7 @@ npm test
 
 ## 下载来源
 
-Minecraft、Forge、Fabric 目录和镜像下载使用 [BMCLAPI](https://bmclapidoc.bangbang93.com/)，感谢 bangbang93 和 OpenBMCLAPI 社区。版本信息通过同源 `/api/catalog` 获取，避免浏览器跨域限制；游戏和 Java 大文件直接从上游下载。模组批量下载通过受限的同源流式接口解决跨域，在浏览器中打包 ZIP。
+Minecraft、Forge、Fabric 目录和镜像下载使用 [BMCLAPI](https://bmclapidoc.bangbang93.com/)，感谢 bangbang93 和 OpenBMCLAPI 社区。版本信息通过同源 `/api/catalog` 获取，避免浏览器跨域限制；原版游戏和 Java 大文件直接从上游下载。Forge 安装器通过同源下载接口保留正确文件名，镜像失败时尝试 Forge 官方 Maven。模组批量下载通过受限的同源流式接口解决跨域，在浏览器中打包 ZIP。
 
 Java 默认使用[清华 TUNA Adoptium 国内镜像](https://mirrors.tuna.tsinghua.edu.cn/help/Adoptium/)，优先提供体积较小的 JRE，可选 JDK 与安装程序。另可选择[华为云 OpenJDK 国内镜像](https://mirrors.huaweicloud.com/openjdk/)（仅 JDK），或 [Adoptium 官方源](https://api.adoptium.net/q/swagger-ui/)作为备用。
 
@@ -90,6 +90,14 @@ npx wrangler secret put CURSEFORGE_API_KEY
 
 ## 接口保护与验证
 
-`/api/catalog`、`/api/java`、`/api/mods` 只读取固定来源。参数限制阻止任意 URL 与路径穿越；目录读取设置 20 秒超时、8 MiB 上限。模组流式下载设置 90 秒超时、64 MiB 上限，只从平台元数据指定的允许 CDN 域名读取 JAR，拒绝重定向和来源不匹配。成功目录响应提供缓存头，不缓存失败或模组二进制响应。
+`/api/catalog`、`/api/java`、`/api/mods`、`/api/forge-download` 只读取固定来源。参数限制阻止任意 URL 与路径穿越；目录读取设置 20 秒超时、8 MiB 上限。模组流式下载设置 90 秒超时、64 MiB 上限，只从平台元数据指定的允许 CDN 域名读取 JAR，使用 Workers 支持的 `redirect: manual`，逐跳检查重定向目标，拒绝来源不匹配和未允许的目标。成功目录响应提供缓存头，不缓存失败或模组二进制响应。
 
 测试覆盖镜像地址映射、Java 目录解析、参数与域名限制、百科来源提取、CurseForge 密钥传递与缺失提示、模组文件匹配和流式返回。修改后运行构建、类型检查、测试与 Wrangler `--dry-run`；浏览器检查批量 ZIP、校验、失败重试、暗色模式及手机布局。
+
+## JAR 下载与文件名
+
+Forge 安装器与模组单独下载都使用同源接口，在保存前检查 JAR/ZIP 文件头，并对可用的 SHA 校验值进行浏览器校验。上游返回 HTML、JSON 等错误页面时显示错误，不把它另存为 JAR。单独下载失败会留在当前页面提示，批量失败保留原有重试功能。
+
+下载响应同时提供 ASCII `filename` 与 UTF-8 `filename*`，浏览器保存时显式指定包含 `.jar` 的文件名；中文、空格、括号和单引号按下载文件名编码处理。Forge 文件名形如 `forge-1.21.1-52.0.1-installer.jar`，无需手动添加扩展名。
+
+回归测试在真正的 workerd（Miniflare）运行时执行下载路由，覆盖 Modrinth 和 CurseForge CDN 重定向、Forge 镜像链、Unicode 文件名、文件字节完整性和错误页面拒绝，避免只在 Node.js 测试中通过、部署到 Worker 却失败。

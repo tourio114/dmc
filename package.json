@@ -12,7 +12,7 @@
     "build:worker": "node scripts/build-worker.mjs",
     "deploy": "npm run build && wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs"
   },
   "dependencies": {
     "fflate": "^0.8.3",
@@ -26,6 +26,7 @@
     "@types/react-dom": "19.2.3",
     "esbuild": "0.28.1",
     "typescript": "5.9.3",
-    "wrangler": "4.92.0"
+    "wrangler": "4.92.0",
+    "miniflare": "4.20260515.0"
   }
 }

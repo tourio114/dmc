@@ -78,7 +78,7 @@ async function mcmodText(url: string) {
 }
 export function trustedModURL(value: string, source: 'modrinth'|'curseforge'): string {
   const u = new URL(value);
-  const allowed = source === 'modrinth' ? ['cdn.modrinth.com'] : ['edge.forgecdn.net','mediafilez.forgecdn.net'];
+  const allowed = source === 'modrinth' ? ['cdn.modrinth.com'] : ['edge.forgecdn.net','mediafilez.forgecdn.net','media.forgecdn.net'];
   if(u.protocol !== 'https:' || u.username || u.password || u.port || !allowed.includes(u.hostname))throw new SourceError('下载源返回了不支持的文件地址');
   return u.href;
 }
