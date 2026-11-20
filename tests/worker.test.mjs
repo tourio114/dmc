@@ -30,3 +30,33 @@ test('Worker catalogue handles success and upstream failures', async () => {
     assert.equal(unavailable.status,502);assert.equal((await unavailable.json()).upstreamStatus,403);
   } finally {globalThis.fetch=original;}
 });
+test('new sources return clear configuration errors without leaking keys',async()=>{
+ const unconfigured=await worker.fetch(new Request('https://dmc.test/api/mods?source=curseforge&action=search&q=sodium'));
+ assert.equal(unconfigured.status,503);assert.match((await unconfigured.json()).error,/CURSEFORGE_API_KEY/);
+ const original=globalThis.fetch;
+ try{
+  globalThis.fetch=async(url,options)=>{assert.equal(new URL(url).hostname,'api.curseforge.com');assert.equal(options.headers['x-api-key'],'test-secret');return Response.json({data:[{id:42,slug:'example',name:'Example',summary:'A mod',downloadCount:1,links:{websiteUrl:'https://example.invalid'}}],pagination:{totalCount:1}});};
+  const configured=await worker.fetch(new Request('https://dmc.test/api/mods?source=curseforge&action=search'),{CURSEFORGE_API_KEY:'test-secret'});
+  assert.equal(configured.status,200);const body=await configured.text();assert(!body.includes('test-secret'));assert.match(body,/curseforge.com\/minecraft\/mc-mods\/example/);
+ }finally{globalThis.fetch=original;}
+});
+test('mod downloads resolve provider metadata and stream only the matching file',async()=>{
+ const original=globalThis.fetch;const bytes=new Uint8Array([80,75,3,4,1,2,3]);
+ const version={id:'version1',project_id:'project1',name:'Mod 1',date_published:'2026-01-01',game_versions:['1.21.1'],loaders:['fabric'],files:[{filename:'test.jar',url:'https://cdn.modrinth.com/data/project1/versions/version1/test.jar',size:bytes.length,primary:true,hashes:{}}],dependencies:[]};
+ try{
+  globalThis.fetch=async url=>{if(String(url).includes('/version/version1'))return Response.json(version);assert.equal(String(url),version.files[0].url);return new Response(bytes);};
+  const response=await worker.fetch(new Request('https://dmc.test/api/mods?source=modrinth&action=download&id=project1&file=version1&filename=test.jar'));
+  assert.equal(response.status,200);assert.match(response.headers.get('content-disposition'),/test.jar/);assert.deepEqual(new Uint8Array(await response.arrayBuffer()),bytes);
+  const wrong=await worker.fetch(new Request('https://dmc.test/api/mods?source=modrinth&action=download&id=wrong&file=version1&filename=test.jar'));assert.equal(wrong.status,400);
+  version.files[0].url='https://localhost/private';
+  const unsafe=await worker.fetch(new Request('https://dmc.test/api/mods?source=modrinth&action=download&id=project1&file=version1&filename=test.jar'));assert.equal(unsafe.status,502);
+ }finally{globalThis.fetch=original;}
+});
+test('Java Huawei source discovers a real directory and matches macOS ARM64 packages',async()=>{
+ const original=globalThis.fetch;
+ try{
+  globalThis.fetch=async url=>String(url)==='https://mirrors.huaweicloud.com/openjdk/'?new Response('<a href="21.0.1/">old</a><a href="21.0.2/">new</a>'):new Response('<a href="openjdk-21.0.2_macos-aarch64_bin.tar.gz">mac</a><a href="openjdk-21.0.2_windows-x64_bin.zip">windows</a>');
+  const response=await worker.fetch(new Request('https://dmc.test/api/java?source=huawei&version=21&os=mac&arch=aarch64&kind=jdk'));
+  assert.equal(response.status,200);const files=await response.json();assert.equal(files.length,1);assert.equal(files[0].url,'https://mirrors.huaweicloud.com/openjdk/21.0.2/openjdk-21.0.2_macos-aarch64_bin.tar.gz');
+ }finally{globalThis.fetch=original;}
+});
